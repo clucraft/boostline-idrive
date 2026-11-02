@@ -1,0 +1,40 @@
+{
+  "id": "boostline",
+  "title": "Boostline",
+  "description": "Live engine data and CSV logs from the DME, read-only",
+  "version": "0.1.0",
+  "vendor": "boostline",
+  "loggingId": "OAB1",
+  "iconGlyph": "BL",
+  "maxDiskUsage": 134217728,
+  "signals": {
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": ["sendTasuRequest"],
+      "_broadcasts": ["sendTasuResponse"]
+    }
+  },
+  "screens": [
+    { "name": "MAIN", "kind": "canvas", "title": "Boostline",
+      "buttons": [["BTN_REC", "Start capture"], ["BTN_PAGE", "Next page"], ["BTN_SETTINGS", "Settings"]] }
+  ],
+  "settings": [
+    {"key": "pressure", "label": "Pressure unit", "type": "choice", "default": "bar",
+     "options": [["bar", "bar"], ["psi", "psi"], ["kPa", "kPa"]]},
+    {"key": "temperature", "label": "Temperature unit", "type": "choice", "default": "C",
+     "options": [["C", "Celsius"], ["F", "Fahrenheit"]]},
+    {"key": "speed", "label": "Speed unit", "type": "choice", "default": "km/h",
+     "options": [["km/h", "km/h"], ["mph", "mph"]]},
+    {"key": "lambda", "label": "Mixture as", "type": "choice", "default": "lambda",
+     "options": [["lambda", "Lambda"], ["afr", "AFR (petrol)"]]},
+    {"key": "autoRecordWot", "label": "Capture every full-throttle pull", "type": "bool", "default": false},
+    {"key": "bmwDme", "label": "BMW DME data", "type": "choice", "default": "auto",
+     "options": [["auto", "Auto (from the DME)"], ["off", "Off (OBD-II only)"]]},
+    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour",
+     "options": [["m_red", "M Red"], ["m_tricolour", "M Tricolour"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
+    {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
+     "options": [["full", "Full screen"], ["standard", "Standard"]]},
+    {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
+     "options": [["auto", "GPU 60 fps (default)"], ["software", "Software"]]}
+  ]
+}

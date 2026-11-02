@@ -1,0 +1,138 @@
+diff --git a/kit/runtime/renderd.js b/kit/runtime/renderd.js
+index 35f0d54..3f29bcd 100644
+--- a/kit/runtime/renderd.js
++++ b/kit/runtime/renderd.js
+@@ -26,7 +26,9 @@ const rec = require('./record');
+ // link): an older renderer still installed beside mgu-render never gets the apps
+ const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-renderd/renderd.sock', '/run/mgu-render/render.sock'];
+ const SOCKET = SOCKETS[0];
+-const isSocket = (p) => { try { return fs.statSync(p).isSocket(); } catch (e) { return false; } };
++// (a Windows named pipe - the emulator on Windows - stats as a file, and only by connecting to it: it is tried,
++// and connect() retries until it is there)
++const isSocket = (p) => { if (/^\\\\[.?]\\pipe\\/.test(p)) return true; try { return fs.statSync(p).isSocket(); } catch (e) { return false; } };
+ const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10 };
+ const E = { READY: 101, TICK: 102, ERROR: 103, STATS: 104, CCU: 105 };
+ // touch (mgu-render, IterioDev's mgu-renderd): message 9 is CLAIM there; 105 and 106 come back as TOUCH and CLOSED
+diff --git a/kit/tools/emu.js b/kit/tools/emu.js
+index 89c6f39..fb2414d 100644
+--- a/kit/tools/emu.js
++++ b/kit/tools/emu.js
+@@ -3,7 +3,7 @@
+  * emu.js - live emulator: a built app running with the real runtime, drawn in the browser by the car's
+  * GPU draw engine (kit/renderd/src/gfx.c as WebAssembly, kit/emu/web/gfx/).
+  *
+- *   node kit/tools/emu.js redline [--port 8077] [--bg screenshot.png] [--no-touch]   ->  http://localhost:8077 (this computer only)
++ *   node kit/tools/emu.js redline [--port 8077] [--bg screenshot.png] [--no-touch] [--diag responder.js]   ->  http://localhost:8077 (this computer only)
+  *
+  * Three parts in this process:
+  *   app       python3 kit/tools/build.py <id>, then dist/<id> in a child node (hu-stub.js: a stubbed head
+@@ -59,6 +59,8 @@ const args = process.argv.slice(2);
+ const opt = (k, d) => { const i = args.indexOf(k); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
+ const PORT = Number(opt('--port', 8077));
+ const BG = (() => { const b = opt('--bg', null); return b ? path.resolve(b) : null; })();
++// a module that answers the app's UDS requests over TASU as the car's control units would (hu-stub.js tasuStub)
++const DIAG = (() => { const d = opt('--diag', null); return d ? path.resolve(d) : null; })();
+ // touch routing offered by the renderer (the Store's mgu-render: on; --no-touch or the page's switch: a renderer without
+ // it, where the kit draws the slim bar over the HMI's own buttons and every tap is the HMI's)
+ const Touch = { on: (() => { const i = args.indexOf('--no-touch'); if (i < 0) return true; args.splice(i, 1); return false; })() };
+@@ -67,9 +69,11 @@ const listApps = () => fs.readdirSync(path.join(ROOT, 'apps')).filter((d) => fs.
+ /** { id: title } from each app's app.json (the HMI's tile labels) */
+ const appTitles = () => listApps().reduce((o, id) => { try { o[id] = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', id, 'app.json'), 'utf8')).title || id; } catch (e) { o[id] = id; } return o; }, {});
+ let appId = args[0];
+-if (!appId || listApps().indexOf(appId) < 0) { console.error('usage: node kit/tools/emu.js <app> [--port 8077] [--bg file.png] [--no-touch]\napps: ' + listApps().join(' ')); process.exit(2); }
+-// (a short path: Unix socket paths are limited to ~104 bytes)
+-const SOCK = path.join(os.tmpdir(), 'mgu-emu-' + process.pid + '.sock');
++if (!appId || listApps().indexOf(appId) < 0) { console.error('usage: node kit/tools/emu.js <app> [--port 8077] [--bg file.png] [--no-touch] [--diag responder.js]\napps: ' + listApps().join(' ')); process.exit(2); }
++// (a short path: Unix socket paths are limited to ~104 bytes; Windows has named pipes instead)
++const SOCK = process.platform === 'win32' ? '\\\\.\\pipe\\mgu-emu-' + process.pid : path.join(os.tmpdir(), 'mgu-emu-' + process.pid + '.sock');
++// (Windows installs Python as python, and python3 there is often the Store's placeholder)
++const PYTHON = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+ const MAX_MSG = 24 << 20;                       // a bigger message ends the connection (PROTOCOL.md "Framing")
+ const PAGE_BEHIND = 8 << 20, PAGE_GONE = 64 << 20;   // bytes queued to a page: frames wait for it / it is closed
+ 
+@@ -618,7 +622,7 @@ function build() {
+     App.waiting = null;
+     setStatus('building');
+     let outText = '';
+-    const p = App.building = spawn('python3', [path.join(ROOT, 'kit', 'tools', 'build.py'), id], { cwd: ROOT });
++    const p = App.building = spawn(PYTHON, [path.join(ROOT, 'kit', 'tools', 'build.py'), id], { cwd: ROOT });
+     p.stdout.on('data', (d) => { outText += d; });
+     p.stderr.on('data', (d) => { outText += d; });
+     p.on('error', (e) => { outText += String(e); });
+@@ -671,7 +675,7 @@ function start(id) {
+         // the user left the app (the page shows the HMI's app picker): a rebuilt app starts without opening, as one
+         // the car restarts in the background; a newly chosen app opens
+         App.opened = false;
+-        const env = Object.assign({}, process.env, { MGU_RENDERD_SOCKET: SOCK, MGU_EMU_CLOSED: App.closed && !App.openNext ? '1' : '' });
++        const env = Object.assign({}, process.env, { MGU_RENDERD_SOCKET: SOCK, MGU_EMU_CLOSED: App.closed && !App.openNext ? '1' : '', MGU_EMU_DIAG: DIAG || '' });
+         App.openNext = false;
+         delete env.MGU_RENDERD_FILE;
+         const ch = App.child = fork(path.join(__dirname, 'hu-stub.js'), [path.join(ROOT, 'dist', id), data], { cwd: data, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+diff --git a/kit/tools/hu-stub.js b/kit/tools/hu-stub.js
+index bf78274..05c61b5 100644
+--- a/kit/tools/hu-stub.js
++++ b/kit/tools/hu-stub.js
+@@ -237,7 +237,8 @@ function liveLoop(hu) {
+ 
+ /**
+  * ctx.signals: watch() keeps the handlers; hu.feed(iface, field, value) calls them as a SOME/IP
+- * notification would (the provider then counts as available). Methods (UDS, setters) fail.
++ * notification would (the provider then counts as available). Methods (UDS, setters) fail, except
++ * UDS over TASU when emu.js --diag names a responder (tasuStub below).
+  */
+ function liveSignals(hu) {
+     const subs = hu.subs = {};
+@@ -247,17 +248,52 @@ function liveSignals(hu) {
+         if (avail !== false) s.res.available = true;
+         try { s.h[field](value); } catch (e) { hu.log.warn(iface + '.' + field + ': ' + e); }
+     });
++    const tasu = process.env.MGU_EMU_DIAG ? tasuStub(hu.log, process.env.MGU_EMU_DIAG) : null;
++    const mine = (p) => tasu && p === tasu.proxy;
+     return {
+         watch: async (iface, inst, handlers) => {
+             const res = { iface, available: false, proxy: null, error: null, shutdown: () => Promise.resolve() };
+             (subs[iface] = subs[iface] || []).push({ h: handlers || {}, res });
+             return res;
+         },
+-        proxy: no, call: no, set: no, on: no, onAvailable: () => Promise.resolve(), hasNative: () => false,
++        proxy: (iface) => (tasu && iface === TASU ? Promise.resolve(tasu.proxy) : no()),
++        call: (p, method, args) => (mine(p) && method === 'sendTasuRequest' ? tasu.request(args) : no()),
++        on: (p, event, fn) => (mine(p) && event === 'sendTasuResponse' ? Promise.resolve(tasu.listen(fn)) : no()),
++        onAvailable: (p, fn) => { if (mine(p)) fn(true); return Promise.resolve(); },
++        set: no, hasNative: () => false,
+         loadConfig: () => { throw new Error('emulator: no SOME/IP configs'); },
+     };
+ }
+ 
++const TASU = 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu';
++
++/**
++ * UDS over TASU (kit/runtime/diag.js) answered by a responder module, emu.js --diag <file>:
++ *   module.exports = (log) => ({ request(target, uds, reply) {} })
++ * uds is the request (service id first, as a Buffer); reply(ecu, bytes) sends one reply frame as the
++ * car's transport does (a 9-byte header with the unit's address in [6], then the UDS reply), once for
++ * each unit that answers (a functional 0xDF request may get several), later ones after a 7F xx 78.
++ * Every listener gets every frame, as on the car.
++ */
++function tasuStub(log, file) {
++    const responder = require(path.resolve(file))(log);
++    const listeners = [];
++    const reply = (ecu, bytes) => {
++        const frame = Buffer.concat([Buffer.from([0, 0, 0, 0, 0, 0, ecu & 0xFF, 0, 0]), Buffer.from(bytes)]);
++        setImmediate(() => listeners.forEach((fn) => { try { fn({ errorCode: 'NO_ERROR', udsResponse: frame }); } catch (e) { log.error('sendTasuResponse', e); } }));
++    };
++    log.info('emu: diagnostics answered by ' + path.basename(file));
++    return {
++        proxy: { iface: TASU, instance: 'SystemFunctionsInternalTasuInst1' },
++        listen: (fn) => { listeners.push(fn); },
++        request: (a) => {
++            const uds = Buffer.concat([Buffer.from([a.serviceID & 0xFF]), Buffer.from(a.udsData || [])]);
++            try { responder.request(a.targetAddress, uds, reply); } catch (e) { log.error('emu: diagnostics responder', e); }
++            return Promise.resolve('NO_ERROR');
++        },
++    };
++}
++
+ /* ---------------- emu.js's app process ---------------- */
+ 
+ // README section 7; a copy: must match SCALE in kit/runtime/car.js. app.json "config.scaling" overrides, as in car.js

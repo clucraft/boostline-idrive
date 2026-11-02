@@ -1,0 +1,6 @@
+[submodule "vendor/boostline"]
+	path = vendor/boostline
+	url = https://github.com/clucraft/Boostline.git
+[submodule "vendor/idrive7-apps"]
+	path = vendor/idrive7-apps
+	url = https://github.com/cauliflowermossgrape/idrive7-apps.git

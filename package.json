@@ -1,0 +1,18 @@
+{
+  "name": "boostline-idrive",
+  "version": "0.1.0",
+  "description": "Boostline for the BMW iDrive 7 (MGU) head unit: read-only engine logging over the head unit's own diagnostic link",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "setup": "node tools/setup.js",
+    "bundle": "node tools/bundle.js",
+    "emu": "node tools/emu.js",
+    "test": "node tools/bundle.js && node test/run.js",
+    "test:node8": "node tools/bundle.js && node tools/node8.js test/run.js",
+    "build:car": "node tools/build-car.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}
