@@ -4,7 +4,7 @@
 
 > **Status: proof of concept, not yet run on a car.** Everything below works in the emulator on a PC. Whether the real head unit passes Boostline's fast logging requests, and how fast it answers, is what the first test on a car has to show. See [What still needs a car](#what-still-needs-a-car).
 
-> **You need a rooted head unit.** Apps like this run only on an MGU whose owner has root access. This project doesn't provide that or explain how to get it. Rooting can wipe the head unit's coding and, at worst, brick it. Back up your coding first.
+> **Your iDrive 7 head unit must be rooted to use this.** BMW's head unit only runs apps BMW installs, so Boostline can only be installed on a unit you have root (SSH) access to. Rooting is done with the community tool [idrive7-8-ssh-root](https://github.com/cauliflowermossgrape/idrive7-8-ssh-root). It can wipe the head unit's coding, delete BMW Digital Key pairings and, at worst, brick the unit. Read [Rooting your head unit](#rooting-your-head-unit) before you start. The emulator on a PC needs no root.
 
 ![Boostline in the emulator: live tiles with actual and target values](docs/emulator-live.png)
 
@@ -176,9 +176,51 @@ Both run the app's diagnostic path end to end: Boostline's Session → `tasu-lin
 
 `test:node8` runs them on Node 8.17.0, as the head unit does. It downloads that Node release once from nodejs.org and checks it against the release's checksums.
 
+## Rooting your head unit
+
+**This is required.** The head unit is a Linux computer that runs BMW's apps, but it only installs apps BMW delivers. Boostline, like every app in the [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps) kit it is built on, is installed over SSH as `root`. So before anything else, your iDrive 7 (MGU) head unit needs root SSH access.
+
+### The rooting tool
+
+**[cauliflowermossgrape/idrive7-8-ssh-root](https://github.com/cauliflowermossgrape/idrive7-8-ssh-root)** turns on the head unit's root SSH service using only the car's ENET diagnostic port and a laptop.
+
+- **Supported units:** it handles iDrive 7 (MGU ID7) and the iDrive 8 BDC3 / BCP units. Boostline and the app kit are for **iDrive 7 only**.
+- **Its README is the authority.** Follow it, not this summary.
+
+You need:
+
+- an **ENET cable**, wired. The tool's README says WiFi adapters (MHD, bootmod3) can't carry SSH, so they won't do for this step, even though Boostline needs no cable once it's installed.
+- a Windows, macOS or Linux laptop with an OpenSSH client
+- the tool's prebuilt Windows `.exe`, or Python 3.9+ to run it from source
+- on Windows, the tool run as Administrator
+- the ignition on, or the car awake
+
+### The steps
+
+1. **Back up the head unit's coding first.** Flashing wipes it. The tool's README describes doing this with BimmerCode, or with ISTA / E-Sys.
+2. **Run the tool's *Flash + Enable* with your VIN.** This is a one-time flash of a small debug image, then SSH is enrolled and made permanent with debug mode off.
+3. **Restore your coding** if anything was reset.
+4. **Re-pair every BMW Digital Key.** The flash deletes them, and the coding backup doesn't cover them.
+5. **Keep the SSH key and the head unit's address** the tool saves in `data/enrollments/<VIN>/`. You need them for the install below:
+
+   | What | File | Installer setting |
+   |---|---|---|
+   | The key | `id_rsa` | `KEY=` / `-Key` |
+   | The address (e.g. `169.254.36.47`) | `connect.txt` | `HU=root@<address>` / `-Ip` |
+
+### Risks and undoing it
+
+- **Risks:** the tool is for your own vehicle, at your own risk. Its disclaimer: flashing can wipe the head unit's coding, delete its BMW Digital Key pairings and, in the worst case, brick the module.
+- **Undoing root:** the tool's *Disable* turns SSH off again.
+- **Removing the apps:** the kit installer's `restore` takes the apps off and puts the head unit's files back from its backup.
+
+Boostline isn't affiliated with the rooting tool or its authors, and can't help with rooting problems. Ask in [its issues](https://github.com/cauliflowermossgrape/idrive7-8-ssh-root/issues).
+
 ## On a car
 
-1. **Root the head unit and get BMW's app SDK from it.** The [idrive7-apps README](https://github.com/cauliflowermossgrape/idrive7-apps#31-get-the-sdk-from-your-unit) explains how to extract the SDK into `vendor/idrive7-apps/oap-sdk/` with `kit/tools/extract_sdk.js`, replacing the placeholder.
+1. **Root the head unit** ([above](#rooting-your-head-unit)) **and get BMW's app SDK from it.** The [idrive7-apps README](https://github.com/cauliflowermossgrape/idrive7-apps#31-get-the-sdk-from-your-unit) explains how to:
+   - copy one of BMW's preinstalled apps off the unit over SSH
+   - extract the SDK from it into `vendor/idrive7-apps/oap-sdk/` with `kit/tools/extract_sdk.js`, replacing the placeholder
 2. **Build the package:**
 
    ```bash
@@ -186,7 +228,12 @@ Both run the app's diagnostic path end to end: Boostline's Session → `tasu-lin
    ```
 
    This writes `dist/boostline@<version>.mgu`. It refuses to build with the placeholder SDK. The package contains BMW's SDK, so keep it for your own car and never publish it.
-3. **Install it** with the kit's installer: `deploy/make-car-kit.sh` and `push-to-car.sh` / `push-to-car.ps1` in `vendor/idrive7-apps`, as its README describes. They also install the GPU renderer.
+3. **Install it** with the kit's installer in `vendor/idrive7-apps`, as its README describes. It also installs the GPU renderer.
+   - Build the car kit with `deploy/make-car-kit.sh`.
+   - Push it with `push-to-car.sh` (Linux/macOS) or `push-to-car.ps1` (Windows), using the SSH key and address from the rooting tool:
+     - `push-to-car.sh`: `HU=root@<address> KEY=<.../data/enrollments/<VIN>/id_rsa>`
+     - `push-to-car.ps1`: `-Key <...\data\enrollments\<VIN>\id_rsa> -Ip <address>`
+   - Run its `check` first. It is read-only and lists what `install` would change.
 4. **For the full BMW channel set,** copy the DME data you imported in Boostline's desktop app into the app's data folder on the head unit:
 
    - from: `bmw-dme-data.json` in Boostline's settings folder
