@@ -19,13 +19,29 @@ Boostline is an independent community project. It is not affiliated with or endo
 - **Live tiles** on three pages (*Boost & fuel*, *Timing*, *Engine*):
   - Each tile shows the current value and a 12-second trace.
   - Actual/target pairs share a tile with a deviation bar: boost, lambda, rail pressure, wastegate, throttle and VANOS.
-  - Units are bar/psi/kPa, °C/°F, km/h/mph and lambda/AFR.
+  - Values are shown in the units you pick (see [Units](#units)).
 - **Start capture** writes a Boostline CSV log to the app's data folder. The desktop app's log viewer, dyno and drag tools open it. Optionally, every full-throttle pull is captured automatically.
 - **Status page:** VIN, DME software, diagnostic index, which BMW DME data is in use, sample rate, the diagnostic link's request counts, and Boostline's log.
 
+### Units
+
+Speed, power and torque default to **mph, hp and lb-ft**, and the default drag run is 0–60 mph. You can change each of them in the app's **Settings** (the Settings tab, or the Settings button):
+
+| Setting | Choices (default first) |
+|---|---|
+| Speed unit | mph, km/h |
+| Power unit | hp, PS, kW |
+| Torque unit | lb-ft, Nm |
+| Pressure unit | bar, psi, kPa |
+| Temperature unit | Celsius, Fahrenheit |
+| Mixture as | lambda, AFR (petrol) |
+| Drag: run | 0–60 mph, 60–130 mph, 1/8 mile, 1/4 mile, 0–100 / 100–200 / 200–300 km/h |
+
+A change applies at once: the live tiles, the dyno curves and peaks, and the drag times and trace are redrawn in the new unit. Saved runs and logs aren't changed; they keep Boostline's native units, as on the desktop. The dyno's weight setting is in kg.
+
 ### Dyno (road dyno)
 
-![The Dyno page: engine power, wheel power and torque against rpm from a 4th-gear pull, with the peaks](docs/emulator-dyno.png)
+![The Dyno page: engine power, wheel power (hp) and torque (lb-ft) against rpm from a 4th-gear pull, with the peaks](docs/emulator-dyno.png)
 
 1. On the *Dyno* page, press **Arm run**.
 2. Do a full-throttle pull in one gear (3rd or 4th), from below the start rpm (2000 by default) to past the end rpm (6500 by default).
@@ -38,13 +54,13 @@ Boostline detects the pull and the gear on its own. It estimates engine power, w
 
 ### Drag
 
-![The Drag page: a 0-100 km/h run with the speed trace, the shifts, the time, trap speed and splits](docs/emulator-drag.png)
+![The Drag page: a 0-60 mph run with the speed trace, the shifts, the time, trap speed and splits](docs/emulator-drag.png)
 
 The run types are:
 
-- 0–100, 100–200 and 200–300 km/h
-- 0–60 and 60–130 mph
+- 0–60 mph (the default) and 60–130 mph
 - 1/8 and 1/4 mile
+- 0–100, 100–200 and 200–300 km/h
 
 How a run is timed:
 
@@ -56,7 +72,7 @@ The page shows:
 - the time and the trap speed
 - the distance
 - the best time for that run type
-- a split every 10 km/h (or mph)
+- a split every 10 mph (every 10 km/h for the km/h runs)
 - the speed trace with each shift and the gear it went into
 
 **Speedometer correction:** *True speed vs. the car's* corrects the car's speed by a fixed percentage. Measure the percentage once against GPS.
