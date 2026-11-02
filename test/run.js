@@ -20,6 +20,7 @@ const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'boostline-idrive-'));
 fs.mkdirSync(path.join(stage, 'kit'));
 fs.copyFileSync(path.join(ROOT, 'app', 'boostline-core.js'), path.join(stage, 'boostline-core.js'));
 fs.copyFileSync(path.join(ROOT, 'app', 'tasu-link.js'), path.join(stage, 'tasu-link.js'));
+fs.copyFileSync(path.join(ROOT, 'app', 'runs.js'), path.join(stage, 'runs.js'));
 fs.copyFileSync(path.join(ROOT, 'vendor', 'idrive7-apps', 'kit', 'runtime', 'diag.js'), path.join(stage, 'kit', 'diag.js'));
 
 const core = require(path.join(stage, 'boostline-core.js'));
@@ -181,6 +182,87 @@ test('the transport refusing requests: the same error, and the log says why', as
     assert.strictEqual(s.state, 'error');
     assert(/does not respond/.test(s.error), s.error);
     assert(h.got.logs.some((l) => /refused the request: transport refused: APP_REQUEST_NOT_ACCEPTED/.test(l)), h.got.logs.join('\n'));
+});
+
+/**
+ * Boostline's simulated drive cycle (idle, launch to ~190 km/h, cruise, a 4th-gear pull to the limiter,
+ * stop) at `hz`, faster than real time: fn(t, snapshot) per sample until it returns true or `seconds` pass.
+ */
+function driveCycle(hz, seconds, fn) {
+    const engine = new fakeDme.SimEngine();
+    for (let i = 0; i * (1 / hz) < seconds; i++) {
+        engine.step(1 / hz);
+        if (fn(i / hz, engine.snapshot())) return true;
+    }
+    return false;
+}
+
+test('the dyno captures the drive cycle\'s 4th-gear pull and saves it as the desktop does', () => {
+    const { DynoRuns } = require(path.join(stage, 'runs.js'));
+    const dir = path.join(dataDir(false), 'Dyno');
+    const dyno = new DynoRuns(core, dir);
+    assert.strictEqual(dyno.state, 'idle');
+    let run = null, fast = false;
+    // 30 samples a second, about what the emulator streams. Armed once the launch is over (the car slowing
+    // from its top speed), as a driver arms before the pull: armed at a stop, the launch in 1st would be the pull.
+    driveCycle(30, 180, (t, s) => {
+        if (s['vehicle.speed'] > 150) fast = true;
+        if (!dyno.armed && fast && s['throttle.pedal'] < 10) dyno.arm(Object.assign({}, core.DEFAULT_DYNO_SETUP, { massKg: 1835 }));
+        run = dyno.push(t, s['engine.rpm'], s['vehicle.speed'], s['throttle.pedal'], s['vehicle.gear'], 'WBAEMU000BL000001');
+        return !!run;
+    });
+    assert(run, 'no pull captured');
+    assert.strictEqual(dyno.state, 'done');
+    assert.strictEqual(run.result.gear, 4);
+    // the simulator's B58: about 630 Nm, so a peak of roughly 300-360 kW at the crank
+    assert(run.result.peakEngine.kw > 250 && run.result.peakEngine.kw < 420, 'peak ' + run.result.peakEngine.kw.toFixed(0) + ' kW');
+    assert(run.result.peakTorque.nm > 450 && run.result.peakTorque.nm < 750, 'torque ' + run.result.peakTorque.nm.toFixed(0) + ' Nm');
+    // saved as SavedDynoRun, <id>.json, with the raw samples (the desktop re-analyses from them)
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, run.id + '.json'), 'utf8'));
+    assert.strictEqual(saved.vin, 'WBAEMU000BL000001');
+    assert(Array.isArray(saved.input.rpm) && saved.input.rpm.length === saved.input.t.length && saved.input.t.length > 50);
+    // another setup analyses the run again: more mass, more power
+    const before = dyno.result.peakEngine.kw;
+    dyno.setSetup(Object.assign({}, core.DEFAULT_DYNO_SETUP, { massKg: 2100 }));
+    assert(dyno.result.peakEngine.kw > before * 1.05, dyno.result.peakEngine.kw + ' vs ' + before);
+    // and a new DynoRuns lists it
+    assert.strictEqual(new DynoRuns(core, dir).runs[0].id, run.id);
+});
+
+test('the drag timer times the drive cycle\'s launch: 0-100 km/h and the 1/8 mile', () => {
+    const { DragRuns } = require(path.join(stage, 'runs.js'));
+    const dir = path.join(dataDir(false), 'Drag');
+    ['0-100', '201m'].forEach((mode) => {
+        const drag = new DragRuns(core, dir);
+        drag.arm(mode, { calibration: [], environment: { altitudeM: 0, ambientTempC: 20, humidityPct: 50 } });
+        let run = null;
+        driveCycle(30, 120, (t, s) => { run = drag.push(t, s['vehicle.speed'], s['vehicle.gear'], s['engine.rpm']); return !!run; });
+        assert(run, mode + ': no run');
+        assert(run.result.finished, mode + ': ' + run.result.warnings.join('; '));
+        const time = run.result.finalTime;
+        if (mode === '0-100') {
+            assert(time > 3 && time < 7, '0-100 in ' + time);
+            assert(run.result.splits.length >= 8, 'splits');
+            assert(run.result.gearChanges.some((g) => g.from === 1 && g.to === 2), 'no 1-2 shift');
+        } else assert(time > 6 && time < 14, '1/8 mile in ' + time);
+        assert(fs.existsSync(path.join(dir, run.id + '.json')), 'not saved');
+    });
+    const drag = new DragRuns(core, dir);
+    assert.strictEqual(drag.runs.length, 2);
+    assert(drag.best('0-100') > 3);
+});
+
+test('a drag run with a speedometer correction times on the corrected speed', () => {
+    const { DragRuns } = require(path.join(stage, 'runs.js'));
+    const times = [0, 5].map((pct) => {
+        const drag = new DragRuns(core, path.join(dataDir(false), 'Drag'));
+        drag.arm('0-100', { calibration: pct ? [{ ecu: 100, gps: 100 * (1 + pct / 100) }] : [] });
+        let run = null;
+        driveCycle(30, 120, (t, s) => { run = drag.push(t, s['vehicle.speed']); return !!run; });
+        return run.result.finalTime;
+    });
+    // 5 % faster than the car says: 100 km/h true comes before the car shows 100
+    assert(times[1] < times[0], times.join(' vs '));
 });
 
 test('the app\'s own code compiles on this Node', () => {

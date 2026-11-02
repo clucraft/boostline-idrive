@@ -26,6 +26,9 @@
 import { SimEngine } from '@core/vehicle/simulator'
 import type { BmwDataPack, BmwMeasurement, BmwValueType } from '@core/bmwdata/types'
 
+/** (for the tests: a drive cycle faster than real time) */
+export { SimEngine }
+
 const ZGW = 0x10
 const DME = 0x12
 const ALL = 0xdf

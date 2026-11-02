@@ -23,8 +23,11 @@ export { useTasuLink, TasuRefusedError, type TasuLink, type TasuRequestOptions }
 export { makeDirs } from './headUnitRuntime'
 export { CH } from '@shared/types'
 export { BMW_CATALOG, DEFAULT_LIVE_CHANNELS } from '@shared/catalog'
-export { DEFAULT_UNITS, displayUnitFor } from '@shared/units'
+export { DEFAULT_UNITS, displayUnitFor, powerFromKw, torqueFromNm, speedFromKmh } from '@shared/units'
 export { logFileName } from '@core/recorder'
+// the road dyno and the drag timer, as the desktop app's Dyno and Drag pages use them
+export { analyzeDyno, DynoDetector, DEFAULT_DYNO_SETUP } from '@shared/analysis/dyno'
+export { analyzeDrag, DragDetector, DRAG_MODES } from '@shared/analysis/drag'
 
 /** The Boostline release this bundle was built from (the vendor/boostline submodule). */
 export const BOOSTLINE_VERSION: string = boostlinePackage.version

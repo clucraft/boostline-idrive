@@ -1,6 +1,6 @@
 {
   "name": "boostline-idrive",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Boostline for the BMW iDrive 7 (MGU) head unit: read-only engine logging over the head unit's own diagnostic link",
   "private": true,
   "license": "MIT",
