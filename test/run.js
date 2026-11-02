@@ -21,7 +21,14 @@ fs.mkdirSync(path.join(stage, 'kit'));
 fs.copyFileSync(path.join(ROOT, 'app', 'boostline-core.js'), path.join(stage, 'boostline-core.js'));
 fs.copyFileSync(path.join(ROOT, 'app', 'tasu-link.js'), path.join(stage, 'tasu-link.js'));
 fs.copyFileSync(path.join(ROOT, 'app', 'runs.js'), path.join(stage, 'runs.js'));
-fs.copyFileSync(path.join(ROOT, 'vendor', 'idrive7-apps', 'kit', 'runtime', 'diag.js'), path.join(stage, 'kit', 'diag.js'));
+fs.copyFileSync(path.join(ROOT, 'app', 'picker.js'), path.join(stage, 'picker.js'));
+// the kit's runtime: diag.js, and sheet.js and the drawing it needs for the picker
+(function copyDir(from, to) {
+    fs.readdirSync(from).forEach((f) => {
+        const a = path.join(from, f), b = path.join(to, f);
+        if (fs.statSync(a).isDirectory()) { fs.mkdirSync(b); copyDir(a, b); } else fs.copyFileSync(a, b);
+    });
+})(path.join(ROOT, 'vendor', 'idrive7-apps', 'kit', 'runtime'), path.join(stage, 'kit'));
 
 const core = require(path.join(stage, 'boostline-core.js'));
 const { TasuLink } = require(path.join(stage, 'tasu-link.js'));
@@ -149,6 +156,99 @@ test('captures to a Boostline CSV in the app\'s Logs folder', async () => {
     assert(header > 0, 'header line');
     assert(text.slice(header + 1).filter((l) => /^\d/.test(l)).length > 5, 'rows');
     assert(core.folderBytes(path.join(dir, 'Logs')) > 0);
+});
+
+test('the channel picker: groups, ticks, the four the dyno needs, the limit, Defaults', async () => {
+    const picker = require(path.join(stage, 'picker.js'));
+    const { Recorder } = require(path.join(stage, 'kit', 'record.js'));
+    const theme = require(path.join(stage, 'kit', 'themes.js')).theme('m_tricolour');
+    const h = await headUnit(fakeDme(quiet));
+    await h.session.connect(core.HEAD_UNIT_CONNECTION);
+    const channels = new Map(h.got.channels.map((c) => [c.id, c]));
+    await h.session.disconnect();
+    // the pages' alternatives: the DME's value when there is one, else OBD-II's
+    const entries = [['ign.avg', 'obd.timing_advance'], ['load.maf', 'obd.maf'], 'engine.rpm'];
+    assert.deepStrictEqual(picker.defaultIds(entries, channels), ['ign.avg', 'load.maf', 'engine.rpm']);
+    assert.deepStrictEqual(picker.defaultIds(entries, new Set(['obd.timing_advance', 'obd.maf', 'engine.rpm'])), ['obd.timing_advance', 'obd.maf', 'engine.rpm']);
+    // required first, then the wanted the car offers
+    assert.deepStrictEqual(picker.loggedIds(['boost.actual', 'nope'], channels, 70).slice(0, 5), ['engine.rpm', 'vehicle.speed', 'throttle.pedal', 'vehicle.gear', 'boost.actual']);
+
+    let done = null;
+    const sheetFor = (wanted, max) => picker.channelSheet({
+        channels: () => channels, groups: core.GROUP_ORDER, wanted, isDefault: true, max,
+        defaults: () => ['boost.actual', 'boost.target'], unit: (d) => d.unit, done: (c) => { done = c; },
+    });
+    const sh = sheetFor(['boost.actual'], 70);
+    const r = new Recorder(1600, 520);
+    assert(sh.draw(r, theme).length > 3, 'targets');
+    const rows = sh.rows();
+    assert(/Defaults/.test(rows[0].label));
+    const knock = rows.findIndex((x) => x.label === 'Knock');
+    assert(knock > 0 && rows[knock].value === '0 of 6', 'Knock group: ' + JSON.stringify(rows[knock]));
+    assert(rows.some((x) => /BMW names/.test(x.label)), 'the DME group');
+    // open Knock, tick cylinder 1
+    sh.focus = knock; sh.press();
+    assert(sh.open && sh.open.group === 'Knock');
+    r.reset(); sh.draw(r, theme);
+    sh.sub = 0; sh.press();
+    assert(sh.rows()[0].on, 'knock cyl 1 ticked');
+    assert(sh.chosen().indexOf('knock.signal.cyl1') >= 0);
+    sh.press(); sh.press();
+    assert(sh.chosen().indexOf('knock.signal.cyl1') >= 0, 'ticked twice more: on');
+    // engine speed can't be unticked
+    sh.back();
+    sh.focus = sh.rows().findIndex((x) => x.label === 'Engine'); sh.press();
+    sh.sub = sh.open.defs.findIndex((d) => d.id === 'engine.rpm'); sh.press();
+    assert(sh.rows()[sh.sub].on && sh.rows()[sh.sub].value === 'always');
+    sh.back();
+    assert.strictEqual(sh.back(), 'close');
+    sh.onClose();
+    assert(done && !done.isDefault && done.ids.indexOf('knock.signal.cyl1') >= 0 && done.ids.indexOf('boost.actual') >= 0);
+    // at the limit nothing more goes on; Defaults puts the pages' set back
+    done = null;
+    const full = sheetFor(['boost.actual'], 5);
+    full.focus = full.rows().findIndex((x) => x.label === 'Boost'); full.press();
+    full.sub = full.open.defs.findIndex((d) => d.id === 'boost.target'); full.press();
+    assert(full.chosen().indexOf('boost.target') < 0, 'over the limit');
+    full.back();
+    full.focus = 0; full.press();
+    assert.deepStrictEqual(full.chosen(), ['boost.actual', 'boost.target']);
+    full.onClose();
+    assert(done && done.isDefault);
+    // nothing changed: nothing handed over
+    done = null;
+    const same = sheetFor(['boost.actual'], 70);
+    same.onClose();
+    assert.strictEqual(done, null);
+});
+
+test('picked channels are streamed and captured, the rest not; Session stops at MAX_STREAMED', async () => {
+    const dir = dataDir(true);
+    const h = await headUnit(fakeDme(quiet), { dataDir: dir });
+    await h.session.connect(core.HEAD_UNIT_CONNECTION);
+    let file;
+    try {
+        await h.session.setStreamChannels(['knock.signal.cyl1', 'dme.6a48', 'boost.actual']);
+        await h.session.startRecording();
+        await later(800);
+        file = await h.session.stopRecording();
+        const last = h.got.batches[h.got.batches.length - 1];
+        assert.deepStrictEqual(last.channelIds.slice().sort(), ['boost.actual', 'dme.6a48', 'engine.rpm', 'knock.signal.cyl1', 'throttle.pedal', 'vehicle.gear', 'vehicle.speed']);
+        const row = last.rows[last.rows.length - 1], knock = row[last.channelIds.indexOf('knock.signal.cyl1')];
+        assert(knock >= 0.3 && knock < 2.5, 'knock signal ' + knock);
+        // everything the car offers: Session streams the first MAX_STREAMED
+        const all = h.got.channels.map((c) => c.id);
+        assert(all.length > core.MAX_STREAMED, all.length + ' channels offered');
+        await h.session.setStreamChannels(all);
+        h.got.batches = [];
+        await later(800);
+        const b = h.got.batches[h.got.batches.length - 1];
+        assert(b, 'no samples');
+        assert.strictEqual(b.channelIds.length, core.MAX_STREAMED);
+    } finally { await h.session.disconnect(); }
+    const ids = fs.readFileSync(file, 'utf8').split('\n').find((l) => /^# ids=/.test(l));
+    assert(/knock\.signal\.cyl1/.test(ids) && /dme\.6a48/.test(ids), ids);
+    assert(!/boost\.target/.test(ids), 'boost.target was not picked: ' + ids);
 });
 
 test('without BMW DME data: the standard OBD-II channels, read plainly', async () => {

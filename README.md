@@ -20,7 +20,8 @@ Boostline is an independent community project. It is not affiliated with or endo
   - Each tile shows the current value and a 12-second trace.
   - Actual/target pairs share a tile with a deviation bar: boost, lambda, rail pressure, wastegate, throttle and VANOS.
   - Values are shown in the units you pick (see [Units](#units)).
-- **Start capture** writes a Boostline CSV log to the app's data folder. The desktop app's log viewer, dyno and drag tools open it. Optionally, every full-throttle pull is captured automatically.
+- **Channels page:** every channel being logged, with its live value. **Choose channels** picks what is logged, from everything your car offers (see [Choosing what to log](#choosing-what-to-log)).
+- **Start capture** writes a Boostline CSV log of every logged channel to the app's data folder. The desktop app's log viewer, dyno and drag tools open it. Optionally, every full-throttle pull is captured automatically.
 - **Status page:** VIN, DME software, diagnostic index, which BMW DME data is in use, sample rate, the diagnostic link's request counts, and Boostline's log.
 
 ### Units
@@ -38,6 +39,130 @@ Speed, power and torque default to **mph, hp and lb-ft**, and the default drag r
 | Drag: run | 0–60 mph, 60–130 mph, 1/8 mile, 1/4 mile, 0–100 / 100–200 / 200–300 km/h |
 
 A change applies at once: the live tiles, the dyno curves and peaks, and the drag times and trace are redrawn in the new unit. Saved runs and logs aren't changed; they keep Boostline's native units, as on the desktop. The dyno's weight setting is in kg.
+
+### Choosing what to log
+
+![The Channels page: every logged channel with its live value, grouped, during a full-throttle pull](docs/emulator-channels.png)
+
+Boostline reads the same set of channels for the tiles, the Channels page and a capture. By default that is what the three tile pages show plus the barometric pressure and outside temperature the dyno needs (31 channels in the emulator). To change it:
+
+1. Open the **Channels** page and press **Choose channels**.
+2. Pick a group, then tick or untick its channels. The touchscreen and the iDrive controller both work.
+3. Press **Done**. Boostline switches to the new set at once (during a capture, when the capture stops, so a CSV never changes columns).
+
+![The channel picker: BMW's own DME values with toggles, 43 of at most 70 channels logged](docs/emulator-picker.png)
+
+- **The limit is 70 channels,** Boostline's own maximum. The more you log, the fewer samples per second each one gets. The Channels page and the Status page show the current rate.
+- **Always logged:** engine speed, vehicle speed, accelerator pedal and gear. The dyno and the drag timer need them.
+- **Defaults** at the top of the picker goes back to the pages' set.
+- **The tiles follow the choice:** untick a channel and its tile goes too.
+- **Your choice is kept** between drives, in `boostline-app.json` in the app's data folder.
+- **The picker needs the default display settings,** *Screen layout: Full screen* and *Renderer: GPU*, because the kit draws it over the page.
+
+### Parameters you can log
+
+Which ones your car offers depends on two things:
+
+- **BMW DME data** (the file you copy from Boostline's desktop app, see [On a car](#on-a-car)): Boostline maps the values tuners log most onto the channels below, from the measurements your DME's data describes. Which ones exist depends on the DME family (MG1, MEVD17, MSD80 and so on). Every other numeric value in that data is offered too, in the picker's *Other DME values* group, under BMW's own (mostly German) names.
+- **Standard OBD-II:** every DME answers some of these. They are offered with or without the DME data. Without it, they are all there is.
+
+**Default:** *always* = always logged; *yes* = logged unless you untick it; *fallback* = logged by default only when the DME data lacks the better value next to it. **CSV id** is the channel's id in a capture's `# ids=` line. Units are the CSV's (native) units; the screen shows the ones you pick in Settings.
+
+**Engine and throttle**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Engine speed | `engine.rpm` | rpm | always | ✓ | PID 0C |
+| Oil pressure | `engine.oil_pressure` | bar | | ✓ | |
+| Run time since start | `obd.runtime` | s | | | PID 1F |
+| Accelerator pedal | `throttle.pedal` | % | always | ✓ | PID 49 |
+| Throttle angle | `throttle.position` | % | yes | ✓ | PID 11 |
+| Throttle angle target | `throttle.target` | % | yes | ✓ | PID 4C |
+| Throttle angle (relative) | `obd.throttle_relative` | % | | | PID 45 |
+
+**Load and torque**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Engine torque | `load.torque.actual` | Nm | yes | ✓ | PIDs 62 × 63 |
+| Driver torque request | `load.torque.driver` | Nm | | ✓ | |
+| Torque reserve target | `load.torque.reserve` | Nm | | ✓ | |
+| Engine torque, % of reference | `obd.torque_actual_pct` | % | | | PID 62 |
+| Driver torque request, % of reference | `obd.torque_demand_pct` | % | | | PID 61 |
+| Reference torque | `obd.torque_reference` | Nm | | | PID 63 |
+| Air mass flow | `load.maf` | kg/h | yes | ✓ | |
+| Air mass flow (OBD-II) | `obd.maf` | g/s | fallback | | PID 10 |
+| Air mass through the throttle | `load.maf_throttle` | kg/h | | ✓ | |
+| Engine load | `load.engine` | % | | ✓ | |
+| Engine load target | `load.engine_target` | % | | ✓ | |
+| Calculated load | `load.calc` | % | | | PID 04 |
+| Absolute load | `obd.load_absolute` | % | | | PID 43 |
+
+**Boost**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Boost pressure (above the air pressure) | `boost.actual` | bar | yes | ✓ | PIDs 0B − 33 |
+| Boost target | `boost.target` | bar | yes | ✓ | |
+| Boost pressure (absolute) | `boost.charge_abs` | bar | | ✓ | |
+| Boost target (absolute) | `boost.target_abs` | bar | | ✓ | |
+| Manifold pressure (absolute) | `boost.map` | bar | | ✓ | PID 0B (stops at 2.55 bar) |
+| Barometric pressure | `boost.ambient` | bar | yes | ✓ | PID 33 |
+| Wastegate position | `boost.wg_actual` | % | yes | ✓ | |
+| Wastegate target | `boost.wg_target` | % | yes | ✓ | |
+
+**Fuel**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Rail pressure | `fuel.rail.actual` | bar | yes | ✓ | PID 23 |
+| Rail pressure target | `fuel.rail.target` | bar | yes | ✓ | |
+| Low-side fuel pressure | `fuel.lpfp` | bar | | ✓ | |
+| Lambda | `fuel.lambda.actual` | λ | yes | ✓ | PID 34 (or 24) |
+| Lambda target | `fuel.lambda.target` | λ | yes | ✓ | PID 44 |
+| Short-term fuel trim | `fuel.stft` | % | | | PID 06 |
+| Long-term fuel trim | `fuel.ltft` | % | | ✓ | PID 07 |
+| Injection time | `fuel.inj_time` | ms | | ✓ | |
+| Fuel rate | `obd.fuel_rate` | L/h | | | PID 5E |
+
+**Ignition and knock**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Ignition timing (average) | `ign.avg` | ° crank | yes | ✓ | |
+| Ignition timing, per cylinder | `ign.cyl1` … `ign.cyl8` | ° crank | cyl 1–6 | ✓ | |
+| Timing advance (cylinder 1) | `obd.timing_advance` | ° | fallback | | PID 0E |
+| Knock signal, per cylinder | `knock.signal.cyl1` … `knock.signal.cyl8` | as the DME gives it | | ✓ | |
+
+Timing pulled by knock control has no standard name across DMEs. When your DME's data has it, it is in *Other DME values* under BMW's name (in the emulator: *Zuendwinkel Klopfruecknahme Zyl1* to *Zyl6*).
+
+**Temperatures**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Intake air temp | `temp.intake` | °C | yes | ✓ | PID 0F |
+| Charge air temp | `temp.charge` | °C | | ✓ | |
+| Coolant temp | `temp.coolant` | °C | yes | ✓ | PID 05 |
+| Oil temp | `temp.oil` | °C | yes | ✓ | PID 5C |
+| Outside air temp | `temp.ambient` | °C | yes | ✓ | PID 46 |
+| Exhaust temp | `temp.exhaust` | °C | | ✓ | |
+| Catalyst temp | `obd.cat_temp` | °C | | | PID 3C |
+| Transmission oil temp | `temp.trans` | °C | | ✓ | |
+
+**VANOS, vehicle and electrical**
+
+| Parameter | CSV id | Unit | Default | BMW DME data | OBD-II |
+|---|---|---|---|---|---|
+| Intake cam (VANOS) | `vanos.intake.actual` | ° crank | yes | ✓ | |
+| Intake cam target | `vanos.intake.target` | ° crank | yes | ✓ | |
+| Exhaust cam (VANOS) | `vanos.exhaust.actual` | ° crank | | ✓ | |
+| Exhaust cam target | `vanos.exhaust.target` | ° crank | | ✓ | |
+| Valvetronic lift | `vanos.valvelift` | mm | | ✓ | |
+| Vehicle speed | `vehicle.speed` | km/h | always | ✓ | PID 0D (stops at 255 km/h) |
+| Gear | `vehicle.gear` | gear | always | ✓ | PID A4 |
+| Battery voltage | `elec.battery` | V | yes | ✓ | PID 42 |
+
+**Other DME values:** `dme.<DID>` (for example `dme.6a48`), in the units BMW's data gives. Every numeric measurement in your DME's data that isn't one of the above, often several hundred.
 
 ### Dyno (road dyno)
 
@@ -155,6 +280,7 @@ Then open http://localhost:8077.
   - Arm *Dyno* after the launch, while the car slows down or cruises, and it captures the 4th-gear pull. Armed at a stop, it takes the 1st-gear launch as the pull, as the desktop app would.
 - **Live reload:** saving a file in `app/`, `core/` or `vendor/boostline` rebuilds and restarts the app in about a second.
 - **OBD-II only:** `npm run emu -- --obd-only` starts without the emulator's DME data, to see the standard OBD-II channels on their own.
+- **The channel picker:** the emulator's DME offers 72 channels, its knock signals and a few of BMW's own values among them, so *Choose channels* has a DME's worth to pick from. Your choice is kept in `vendor/idrive7-apps/preview/emu/boostline/boostline-app.json`; delete that file to start over.
 
 `npm run setup` (also run by `emu`) does the following:
 
@@ -180,6 +306,8 @@ Both run the app's diagnostic path end to end: Boostline's Session → `tasu-lin
 - block reads over `2C 01`
 - the read-only check
 - CSV capture
+- the channel picker: groups, ticking, the four always-logged channels, the 70-channel limit, Defaults
+- picked channels reaching the CSV, and Boostline's 70-channel limit
 - OBD-II only
 - no answer from the DME
 - the transport refusing requests
@@ -264,7 +392,7 @@ Boostline isn't affiliated with the rooting tool or its authors, and can't help 
 
 The emulator answers the way the kit's code and Boostline's tests say a DME behind the head unit answers. Only a car can tell:
 
-- **Speed:** how many samples per second the head unit's transport delivers. The emulator's ~32 per second comes from an assumed 6 ms per request, so it says nothing about the car.
+- **Speed:** how many samples per second the head unit's transport delivers. The emulator's ~32 per second comes from an assumed 6 ms per request, so it says nothing about the car. The car test will also show how much each extra channel from the picker costs.
 - **Block reads:** whether the transport passes `2C` (dynamic DIDs) and `10 03` (extended session). If it doesn't, Boostline falls back to plain multi-DID reads by itself, and the Status page's log says so.
 - **Head unit behaviour:** BMW's own menus and popups, and running on the car's slower processor.
 - **Dyno and drag precision:** both interpolate between samples, but they're only as good as the sample rate and the speed signal.
@@ -283,7 +411,7 @@ The first test on a car is the speed test: drive with the Status page open, then
 
 ```
 app/                  the head-unit app: app.json, main.js (screens), runs.js (dyno and drag),
-                      tasu-link.js (+ boostline-core.js, generated)
+                      picker.js (the channel picker), tasu-link.js (+ boostline-core.js, generated)
 core/                 the bundle's entry and the head-unit glue: index.ts, hsfzOverTasu.ts,
                       headUnitRuntime.ts, polyfills.ts (Node 8)
 emu/fakeDme.ts        the emulator's DME (invented DIDs, Boostline's simulator)

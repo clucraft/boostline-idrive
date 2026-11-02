@@ -14,6 +14,7 @@ import { defaultSettings } from '@core/defaults'
 import { setRuntime } from '@core/runtime'
 import type { BmwDataPack } from '@core/bmwdata/types'
 import type { AppSettings } from '@shared/types'
+import { MAX_LIVE_CHANNELS } from '@shared/catalog'
 import { headUnitRuntime, makeDirs } from './headUnitRuntime'
 import { useTasuLink, type TasuLink } from './hsfzOverTasu'
 import boostlinePackage from '@boostline/package.json'
@@ -22,7 +23,7 @@ export { Session }
 export { useTasuLink, TasuRefusedError, type TasuLink, type TasuRequestOptions } from './hsfzOverTasu'
 export { makeDirs } from './headUnitRuntime'
 export { CH } from '@shared/types'
-export { BMW_CATALOG, DEFAULT_LIVE_CHANNELS } from '@shared/catalog'
+export { BMW_CATALOG, DEFAULT_LIVE_CHANNELS, GROUP_ORDER } from '@shared/catalog'
 export { DEFAULT_UNITS, displayUnitFor, powerFromKw, torqueFromNm, speedFromKmh } from '@shared/units'
 export { logFileName } from '@core/recorder'
 // the road dyno and the drag timer, as the desktop app's Dyno and Drag pages use them
@@ -31,6 +32,12 @@ export { analyzeDrag, DragDetector, DRAG_MODES } from '@shared/analysis/drag'
 
 /** The Boostline release this bundle was built from (the vendor/boostline submodule). */
 export const BOOSTLINE_VERSION: string = boostlinePackage.version
+
+/**
+ * The most channels Session streams (and captures) at once: its MAX_STREAM (40 live tiles + 30),
+ * which drops any more. The channel picker stops there.
+ */
+export const MAX_STREAMED = MAX_LIVE_CHANNELS + 30
 
 /** How Session.connect() reaches the car on the head unit: EnetAdapter over TASU (no gateway search). */
 export const HEAD_UNIT_CONNECTION = { kind: 'enet', host: 'tasu' } as const

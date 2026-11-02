@@ -2,7 +2,7 @@
   "id": "boostline",
   "title": "Boostline",
   "description": "Live engine data, CSV logs, road dyno and drag timer from the DME, read-only",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "vendor": "boostline",
   "loggingId": "OAB1",
   "iconGlyph": "BL",

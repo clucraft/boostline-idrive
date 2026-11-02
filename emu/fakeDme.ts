@@ -94,7 +94,39 @@ export const FAKE_MEASUREMENTS: readonly FakeMeasurement[] = [
   m(0x6a15, 'STAT_I_ZUENDWINKEL_WERT', 'Zuendwinkel ist', '°CRK', 's16', 1, 10, 0, (s) => s['ign.avg']),
   ...[1, 2, 3, 4, 5, 6].map((n, i) =>
     m(0x6a20 + i, `STAT_ZUENDWINKEL_ZYL${n}_WERT`, `Zuendwinkel Zylinder ${n}`, '°CRK', 's16', 1, 10, 0, (s) => s[`ign.cyl${n}`])
-  )
+  ),
+  // more than the pages show, so the channel picker has a DME's worth to offer
+  m(0x6a30, 'STAT_OELDRUCK_WERT', 'Oeldruck', 'hPa', 'u16', 1, 1, 0, (s) => s['engine.oil_pressure'] * 1000),
+  m(0x6a31, 'STAT_KRAFTSTOFFNIEDERDRUCK_WERT', 'Kraftstoffniederdruck', 'kPa', 'u16', 1, 10, 0, (s) => s['fuel.lpfp'] * 100),
+  m(0x6a32, 'STAT_ADAPTION_MULTIPLIKATIV_BANK1_WERT', 'multiplikative Gemischadaption Bank 1', '', 'u16', 1, 10000, 0, (s) => 1 + s['fuel.ltft'] / 100),
+  m(0x6a33, 'STAT_EINSPRITZZEIT_ZYL1_WERT', 'Einspritzzeit Zylinder 1', 'ms', 'u16', 1, 1000, 0, (s) => s['fuel.inj_time']),
+  m(0x6a34, 'STAT_LADELUFTTEMPERATUR_WERT', 'Ladelufttemperatur', '°C', 's16', 1, 10, 0, (s) => s['temp.charge']),
+  m(0x6a35, 'STAT_ABGASTEMPERATUR_VORKAT_WERT', 'Abgastemperatur vor Katalysator', '°C', 's16', 1, 1, 0, (s) => s['temp.exhaust']),
+  m(0x6a36, 'STAT_I_NWSA_SPREIZUNG_WERT', 'Auslassspreizung ist', '°CRK', 's16', 1, 10, 0, (s) => s['vanos.exhaust.actual']),
+  m(0x6a37, 'STAT_S_NWSA_SPREIZUNG_WERT', 'Auslassspreizung soll', '°CRK', 's16', 1, 10, 0, (s) => s['vanos.exhaust.target']),
+  m(0x6a38, 'STAT_EINLASSVENTILHUB_WERT', 'Einlassventilhub', 'mm', 'u16', 1, 100, 0, (s) => s['vanos.valvelift']),
+  m(0x6a39, 'STAT_REL_FUELLUNG_WERT', 'relative Luftfuellung', '%', 'u16', 1, 10, 0, (s) => s['load.engine']),
+  m(0x6a3a, 'STAT_S_FUELLUNG_WERT', 'Sollfuellung', '%', 'u16', 1, 10, 0, (s) => s['load.engine_target']),
+  m(0x6a3b, 'STAT_FAHRERWUNSCHMOMENT_WERT', 'Fahrerwunschmoment', 'Nm', 's16', 1, 1, 0, (s) => s['load.torque.driver']),
+  m(0x6a3c, 'STAT_LUFTMASSE_WERT', 'Luftmasse', 'kg/h', 'u16', 1, 10, 0, (s) => s['load.maf']),
+  m(0x6a3d, 'STAT_DROSSELKLAPPENWINKEL_SOLL_WERT', 'Drosselklappenwinkel soll', '%', 'u16', 1, 100, 0, (s) => s['throttle.target']),
+  m(0x6a3e, 'STAT_UBATT_WERT', 'Batteriespannung', 'mV', 'u16', 1, 1, 0, (s) => s['elec.battery'] * 1000),
+  // knock: the signal level per cylinder (curated) and the timing it pulled (offered under its SGBD name)
+  ...[1, 2, 3, 4, 5, 6].map((n, i) =>
+    m(0x6a40 + i, `STAT_KLOPFWERT_ZYL${n}_WERT`, `Klopfwert Zylinder ${n}`, 'V', 'u16', 1, 1000, 0, (s) => 0.4 - s[`knock.cyl${n}`] * 0.35)
+  ),
+  ...[1, 2, 3, 4, 5, 6].map((n, i) =>
+    m(0x6a48 + i, `STAT_ZUENDWINKEL_KLOPFRUECKNAHME_ZYL${n}_WERT`, `Zuendwinkelruecknahme Klopfregelung Zylinder ${n}`, '°CRK', 's16', 1, 100, 0, (s) => s[`knock.cyl${n}`])
+  ),
+  m(0x6a50, 'STAT_LADEDRUCK_REGELDIFFERENZ_WERT', 'Ladedruck Regeldifferenz', 'hPa', 's16', 1, 1, 0, (s) => (s['boost.target'] - s['boost.actual']) * 1000),
+  m(0x6a51, 'STAT_KATALYSATORTEMPERATUR_WERT', 'Katalysatortemperatur', '°C', 's16', 1, 1, 0, (s) => s['temp.exhaust'] * 0.85),
+  m(0x6a52, 'STAT_LEERLAUFSOLLDREHZAHL_WERT', 'Leerlaufsolldrehzahl', 'rpm', 'u16', 1, 1, 0, (s) => s['engine.idle_target']),
+  m(0x6a53, 'STAT_LUFTMASSE_SOLL_WERT', 'Luftmasse soll', 'kg/h', 'u16', 1, 10, 0, (s) => s['load.maf_target']),
+  m(0x6a54, 'STAT_MOTORMOMENT_SOLL_WERT', 'Motormoment soll', 'Nm', 's16', 1, 1, 0, (s) => s['load.torque.target']),
+  m(0x6a55, 'STAT_MOMENTENBEGRENZUNG_WERT', 'Momentenbegrenzung', 'Nm', 's16', 1, 1, 0, (s) => s['load.torque.limit']),
+  m(0x6a56, 'STAT_LAMBDAREGLER_AUSGANG_BANK1_WERT', 'Lambdaregler Ausgang Bank 1', '', 'u16', 1, 10000, 0, (s) => 1 + s['fuel.stft'] / 100),
+  m(0x6a57, 'STAT_RADSCHLUPF_WERT', 'Radschlupf', '%', 'u16', 1, 10, 0, (s) => s['vehicle.wheel_slip']),
+  m(0x6a58, 'STAT_ETHANOLGEHALT_WERT', 'Ethanolgehalt', '%', 'u8', 1, 1, 0, (s) => s['fuel.ethanol'])
 ]
 
 /** Boostline DME data pack (format 1) describing FAKE_MEASUREMENTS. */

@@ -11,7 +11,10 @@
  * Pages (header tabs, Next page):
  *   Boost & fuel, Timing, Engine   value tiles; an actual / target pair shares a tile with a bar for
  *                                  how far apart they are; a trace of the last 12 s under the value
- *   Dyno                           Arm run, then a full-throttle pull in one gear: engine power, wheel
+ *   Channels                       every channel streamed (and so captured) with its value, and Choose
+ *                                  channels: the picker (picker.js) for what to stream, saved in
+ *                                  <data>/boostline-app.json; by default what the tiles show
+ *   Dyno                          Arm run, then a full-throttle pull in one gear: engine power, wheel
  *                                  power and torque against rpm, the peaks, the previous run dashed
  *   Drag                           Arm run, then a standing start (or through the start speed): the
  *                                  time, trap speed, splits and the speed trace with the shifts
@@ -31,13 +34,17 @@ const { withAlpha } = require('./kit/canvas');
 const core = require('./boostline-core');
 const { TasuLink } = require('./tasu-link');
 const { DynoRuns, DragRuns, modeName } = require('./runs');
+const picker = require('./picker');
+const { pill } = require('./kit/sheet');
 
+/** A tile is an id, or alternatives of which the first streamed one shows (the DME's, else OBD-II's). */
 const PAGES = [
     { name: 'Boost & fuel', ids: ['engine.rpm', 'throttle.pedal', 'boost.actual', 'boost.target', 'fuel.lambda.actual', 'fuel.lambda.target',
         'fuel.rail.actual', 'fuel.rail.target', 'boost.wg_actual', 'boost.wg_target', 'temp.intake', 'load.torque.actual'] },
-    { name: 'Timing', ids: ['ign.avg', 'ign.cyl1', 'ign.cyl2', 'ign.cyl3', 'ign.cyl4', 'ign.cyl5', 'ign.cyl6', 'engine.rpm'] },
+    { name: 'Timing', ids: [['ign.avg', 'obd.timing_advance'], 'ign.cyl1', 'ign.cyl2', 'ign.cyl3', 'ign.cyl4', 'ign.cyl5', 'ign.cyl6', 'engine.rpm'] },
     { name: 'Engine', ids: ['vehicle.speed', 'vehicle.gear', 'temp.coolant', 'temp.oil', 'throttle.position', 'throttle.target',
-        'vanos.intake.actual', 'vanos.intake.target', 'load.maf', 'elec.battery'] },
+        'vanos.intake.actual', 'vanos.intake.target', ['load.maf', 'obd.maf'], 'elec.battery'] },
+    { name: 'Channels', kind: 'channels', ids: [] },
     { name: 'Dyno', kind: 'dyno', ids: [] },
     { name: 'Drag', kind: 'drag', ids: [] },
     { name: 'Status', kind: 'status', ids: [] },
@@ -45,10 +52,11 @@ const PAGES = [
 /** The weather the dyno corrects for, read from the car when a run is armed. */
 const ENV_IDS = ['boost.ambient', 'temp.ambient'];
 /**
- * Everything the tiles show is streamed (and captured) at once: switching pages doesn't restart the
- * stream. (Session adds rpm, speed, pedal and gear, which the dyno and drag timer need, by itself.)
+ * Unless the channel picker says otherwise, what the tiles show is streamed (and captured) at once:
+ * switching pages doesn't restart the stream. (Session adds rpm, speed, pedal and gear, which the
+ * dyno and drag timer need, by itself.)
  */
-const STREAM_IDS = PAGES.reduce((all, p) => all.concat(p.ids.filter((id) => all.indexOf(id) < 0)), []).concat(ENV_IDS);
+const DEFAULT_ENTRIES = PAGES.reduce((all, p) => all.concat(p.ids), []).concat(ENV_IDS);
 
 /**
  * Actual -> target pairs that share a tile, with the distance (native units) that fills the bar.
@@ -116,6 +124,12 @@ mgu.run({
         try { appState = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch (e) { appState = {}; }
         const saveState = () => { try { fs.writeFileSync(stateFile, JSON.stringify(appState)); } catch (e) { log.warn('state: ' + e.message); } };
         let confirmUntil = 0;              // the closed-course notice is up, waiting for the second press
+        // the channels to stream: the user's list from the picker, or (null) what the pages show on this car
+        let logChoice = Array.isArray(appState.logChannels) ? appState.logChannels.map(String) : null;
+        const wanted = () => logChoice || picker.defaultIds(DEFAULT_ENTRIES, channels);
+        let streamed = new Set();          // what Session streams now (the last batch's channels)
+        let streamedFrom = null;
+        let listY = 0, listMax = 0;        // the Channels page's list: scrolled by, how far it can
 
         const units = () => Object.assign({}, core.DEFAULT_UNITS, {
             pressure: settings.get('pressure'), temperature: settings.get('temperature'), speed: settings.get('speed'),
@@ -148,13 +162,14 @@ mgu.run({
             settings: () => ({ units: units(), autoRecordWot: !!settings.get('autoRecordWot'), bmwDme: settings.get('bmwDme') }),
         });
         session.on('log', (m) => { log.info('boostline: ' + m); addLine(m); });
-        session.on('channels', (list) => { channels = new Map(list.map((c) => [c.id, c])); latest.clear(); traces.clear(); });
+        session.on('channels', (list) => { channels = new Map(list.map((c) => [c.id, c])); latest.clear(); traces.clear(); streamed = new Set(); streamedFrom = null; });
         session.on('status', (s) => {
             const was = status.recording;
             status = s;
             if (was && !s.recording) addLine('Capture saved: ' + path.basename(was.file) + ' (' + was.samples + ' samples)');
         });
         session.on('batch', (b) => {
+            if (b.channelIds !== streamedFrom) { streamedFrom = b.channelIds; streamed = new Set(b.channelIds); }
             const at = (id) => b.channelIds.indexOf(id);
             const iRpm = at('engine.rpm'), iSpeed = at('vehicle.speed'), iPedal = at('throttle.pedal'), iGear = at('vehicle.gear');
             const v = (row, i) => (i >= 0 ? row[i] : NaN);
@@ -200,9 +215,9 @@ mgu.run({
             if (!link.ready) { status = { state: 'error', error: 'No diagnostic link: ' + (link.error || 'TASU unavailable') }; return; }
             const s = await session.connect(core.HEAD_UNIT_CONNECTION);
             if (s.state === 'error') { addLine('Connect: ' + s.error); retry = setTimeout(connect, RETRY_MS); return; }
-            await session.setStreamChannels(STREAM_IDS);
+            await session.setStreamChannels(wanted());
         };
-        addLine('Boostline ' + core.BOOSTLINE_VERSION + ' core, ' + STREAM_IDS.length + ' channels wanted');
+        addLine('Boostline ' + core.BOOSTLINE_VERSION + ' core, ' + (logChoice ? logChoice.length + ' channels chosen' : 'the pages\' channels'));
         connect().catch((e) => log.error('connect', e));
 
         /** The first button follows the page: capture on the live pages, Arm run on Dyno and Drag. */
@@ -248,6 +263,37 @@ mgu.run({
             }
         }
 
+        /** The channel picker, over the page (the kit draws it: GPU renderer, full-screen layout). */
+        function choose() {
+            if (!channels.size) { say('Not connected to the DME: its channels aren\'t known yet'); return; }
+            const sh = picker.channelSheet({
+                channels: () => channels,
+                groups: core.GROUP_ORDER,
+                wanted: wanted(),
+                isDefault: !logChoice,
+                defaults: () => picker.defaultIds(DEFAULT_ENTRIES, channels),
+                max: core.MAX_STREAMED,
+                unit: (def) => unitText(core.displayUnitFor(def, units()).label),
+                done: (c) => {
+                    logChoice = c.isDefault ? null : c.ids;
+                    if (logChoice) appState.logChannels = logChoice; else delete appState.logChannels;
+                    saveState();
+                    addLine('Channels: ' + (logChoice ? logChoice.length + ' chosen' : 'the pages\' channels'));
+                    // a capture keeps its columns: Session switches when it stops
+                    if (status.recording) say('The new channels apply when the capture stops', 8000);
+                    session.setStreamChannels(wanted()).catch((e) => log.error('channels', e));
+                },
+            });
+            if (!ctx.sheet(sh)) say('The picker needs Screen layout: Full screen and Renderer: GPU (Settings)', 10000);
+        }
+        ctx.onScroll((dy) => {
+            if (kind() !== 'channels') return false;
+            const y = Math.max(0, Math.min(listMax, listY + dy));
+            if (y === listY) return false;
+            listY = y;
+            return true;
+        });
+
         ui.onClick('BTN_REC', async () => {
             if (kind() === 'dyno') armOrDisarm(dyno);
             else if (kind() === 'drag') armOrDisarm(drag);
@@ -272,6 +318,7 @@ mgu.run({
             if (k === 'status') statusPage(cv, t);
             else if (k === 'dyno') dynoPage(cv, t);
             else if (k === 'drag') dragPage(cv, t);
+            else if (k === 'channels') channelsPage(cv, t);
             else tilesPage(cv, t, PAGES[page].ids);
             if (Date.now() < confirmUntil) closedCourse(cv, t);
             return ui.image('MAIN_GFX', cv);
@@ -295,9 +342,13 @@ mgu.run({
 
         /* ---------------- live tiles ---------------- */
 
-        /** The page's tiles: channels the car offers, a target folded into its actual's tile. */
-        function tilesOf(ids) {
-            const shown = ids.filter((id) => channels.has(id));
+        /** The page's tiles: channels streamed (the first of alternatives), a target folded into its actual's tile. */
+        function tilesOf(entries) {
+            const shown = [];
+            entries.forEach((e) => {
+                const id = (Array.isArray(e) ? e : [e]).find((x) => streamed.has(x) && channels.has(x));
+                if (id && shown.indexOf(id) < 0) shown.push(id);
+            });
             const folded = new Set(shown.filter((id) => Object.keys(PAIRS).some((a) => PAIRS[a].target === id && shown.indexOf(a) >= 0)));
             return shown.filter((id) => !folded.has(id)).map((id) => {
                 const pair = PAIRS[id];
@@ -309,7 +360,8 @@ mgu.run({
             const tiles = tilesOf(ids);
             const top = pageTop(), bottom = pageBottom(cv);
             if (!tiles.length) {
-                const msg = status.state === 'live' ? 'The DME offers none of this page\'s channels' : connectionLine();
+                const msg = status.state !== 'live' ? connectionLine() : !streamed.size ? 'Starting...'
+                    : 'None of this page\'s channels are logged: see the Channels page';
                 cv.text(msg, cv.w / 2, (top + bottom) / 2, 30, t.dim, { align: 'center' });
                 return;
             }
@@ -369,6 +421,62 @@ mgu.run({
             if (a.length > 1) {
                 cv.fillUnder(pts(a), y + h, withAlpha(t.accent, 0.12));
                 cv.polyline(pts(a), 2.5, withAlpha(t.accent, 0.9));
+            }
+        }
+
+        /* ---------------- channels ---------------- */
+
+        /** Every channel streamed, by group, with its value; Choose channels opens the picker. */
+        function channelsPage(cv, t) {
+            const top = pageTop(), bottom = pageBottom(cv);
+            const bw = 300, bh = 50, bx = cv.w - SIDE - bw, by = top + 2;
+            pill(cv, t, bx, by, bw, bh, 'Choose channels', false);
+            cv.target(bx - 6, by - 6, bw + 12, bh + 12, choose, 'choose', bh / 2 + 6);
+            const n = streamed.size;
+            const head = status.state !== 'live' ? connectionLine()
+                : 'Logging ' + n + ' channel' + (n === 1 ? '' : 's') + (isNum(status.sampleRateHz) ? ' at ' + status.sampleRateHz.toFixed(0) + ' samples per second' : '')
+                    + (logChoice ? ' (your choice)' : ' (what the pages show)');
+            cv.text(fit(cv, head, 24, bx - SIDE - 30), SIDE + 4, by + 34, 24, t.text, { font: 'bold' });
+            noteLine(cv, t);
+            if (status.state !== 'live' || !n) return;
+
+            // one grid in Boostline's group order; a group's name over the cell it starts at
+            // (in the car's order, as the picker lists them; the DME's own values by name)
+            const byGroup = new Map();
+            channels.forEach((def) => {
+                if (!streamed.has(def.id)) return;
+                const g = def.group || 'Custom';
+                if (!byGroup.has(g)) byGroup.set(g, []);
+                byGroup.get(g).push(def);
+            });
+            if (byGroup.has('DME')) byGroup.get('DME').sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+            const order = core.GROUP_ORDER.filter((g) => byGroup.has(g)).concat(Array.from(byGroup.keys()).filter((g) => core.GROUP_ORDER.indexOf(g) < 0));
+            const cells = [];
+            order.forEach((g) => byGroup.get(g).forEach((def, i) => cells.push({ def, head: i ? '' : g })));
+            const C = 5, HEAD = 26, CELL = 68, ROW = HEAD + CELL + 8, x0 = SIDE, w = cv.w - 2 * SIDE - 24, cw = (w - (C - 1) * 10) / C;
+            const y0 = top + 66, view = bottom - 4 - y0, total = Math.ceil(cells.length / C) * ROW;
+            listMax = Math.max(0, total - view);
+            listY = Math.min(listY, listMax);
+            const u = units();
+            cv.clip(x0, y0, w, view);
+            cells.forEach((c, i) => {
+                const cx = x0 + (i % C) * (cw + 10), ry = y0 - listY + Math.floor(i / C) * ROW, cy = ry + HEAD;
+                if (cy + CELL < y0 || ry > y0 + view) return;
+                if (c.head) cv.text(fit(cv, c.head.toUpperCase(), 15, cw - 8, { font: 'bold' }), cx + 4, ry + 18, 15, t.accent, { font: 'bold', spacing: 1.5 });
+                cv.roundRect(cx, cy, cw, CELL, 10, withAlpha('#ffffff', 0.05));
+                cv.text(fit(cv, c.def.name, 17, cw - 28), cx + 14, cy + 23, 17, t.dim);
+                const d = core.displayUnitFor(c.def, u), v = latest.get(c.def.id);
+                const vs = G.fmt(isNum(v) ? d.toDisplay(v) : null, d.decimals(c.def.decimals));
+                const vw = cv.text(vs, cx + 14, cy + 58, 30, isNum(v) ? t.text : t.dim, { font: 'num' });
+                const unit = unitText(d.label);
+                if (unit) cv.text(fit(cv, unit, 18, cw - 40 - vw), cx + 22 + vw, cy + 58, 18, t.dim);
+            });
+            cv.noclip();
+            if (listMax > 0) {
+                // the list scrolls (a finger, or the controller on it): where it is
+                const barX = cv.w - SIDE - 8, barH = Math.max(40, view * view / total), barY = y0 + (view - barH) * (listY / listMax);
+                cv.roundRect(barX, barY, 6, barH, 3, withAlpha('#ffffff', 0.3));
+                cv.scroll = { y: y0, bar: { x: barX, y: barY, w: 6, h: barH } };
             }
         }
 
@@ -574,7 +682,7 @@ mgu.run({
                 ['DME software', ecu.softwareVersion || '--'],
                 ['Diagnostic index', ecu.sgbdIndex || '--'],
                 ['BMW DME data', ecu.dmeData || 'none (OBD-II channels)'],
-                ['Channels', channels.size ? channels.size + ' offered, ' + STREAM_IDS.filter((id) => channels.has(id)).length + ' streamed' : '--'],
+                ['Channels', channels.size ? channels.size + ' offered, ' + streamed.size + ' streamed' + (logChoice ? ' (your choice)' : '') : '--'],
                 ['Sample rate', isNum(status.sampleRateHz) ? status.sampleRateHz.toFixed(1) + ' per second' : '--'],
                 ['Requests', link.stats.sent + ' sent, ' + link.stats.missed + ' unanswered, busy ' + link.busy],
                 ['Capture', status.recording ? path.basename(status.recording.file) + ', ' + status.recording.samples + ' samples' : 'off'],
